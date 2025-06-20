@@ -1,0 +1,13 @@
+# Python virtual environment
+venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# IDE configuration files
+.idea/
+.vscode/
+
+# Log files (for Phase 3)
+*.log
