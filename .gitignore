@@ -11,3 +11,6 @@ __pycache__/
 
 # Log files (for Phase 3)
 *.log
+
+# ChromeProfile
+.WinkedInChromeProfile
