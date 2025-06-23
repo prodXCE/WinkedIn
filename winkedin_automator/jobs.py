@@ -1,60 +1,79 @@
-# Updates selectors for job search inputs to be more robust.
+from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutError
 
-import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-
-
-def search_and_select_job(driver):
+def search_and_select_job(page: Page):
     """
-    Automates the job search process on LINKEDIN_EMAIL
-
-    Returns:
-        A dictionary with job details, or None if failed/cancelled.
+    Automates the job search process using the most robust locators and
+    a defensive scraping strategy.
     """
-    keywords = input("\nEnter job keywords (e.g., 'Android Developer'): ")
-    location = input("\nEnter location (e.g., `Banagaluru, India` or `New Delhi, India`): ")
+    keywords = input("\nEnter job keywords (e.g., 'Software Engineer'): ")
+    location = input("Enter location (e.g., 'Remote'): ")
 
-    print(f"\n Searching for '{keywords}' jobs in '{location}'...")
-    driver.get("https://www.linkedin.com/jobs/](https://www.linkedin.com/jobs/)")
-    wait = WebDriverWait(driver, 10)
+    print(f"\n🔍 Navigating to the jobs page...")
+    page.goto("https://www.linkedin.com/jobs/search/")
 
     try:
-        search_keywords_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[arial-label='Search by title, skill, or company']")))
-        search_keywords_input.clear()
-        search_keywords_input.send_keys(keywords)
+        print("Locating and filling search form...")
+        keywords_selector = "input[aria-label='Search by title, skill, or company']:not([disabled])"
+        location_selector = "input[aria-label='City, state, or zip code']:not([disabled])"
+        keywords_input = page.locator(keywords_selector)
+        location_input = page.locator(location_selector)
+        expect(keywords_input).to_be_visible(timeout=15000)
+        expect(location_input).to_be_visible(timeout=15000)
+        keywords_input.fill(keywords)
+        location_input.fill(location)
 
-        search_location_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[aria-label='City, state, or zip code']")))
-        search_location_input.clear()
-        search_location_input.send_keys(location)
-        search_location_input.send_keys(Keys.RETURN)
+        print("Clicking the specific search button...")
+        search_button = page.locator("button.jobs-search-box__submit-button")
+        search_button.click()
+        
+        print("Search submitted. Waiting for results to appear...")
+        
+        # Step 3: Wait directly for the first job listing to appear.
+        first_job_listing_locator = page.locator("//li[.//a[contains(@href, '/jobs/view/')]]").first
+        expect(first_job_listing_locator).to_be_visible(timeout=25000)
+        print("✅ Job results are visible.")
+        
+        # Step 4: Scrape all the job listings.
+        jobs = page.locator("//li[.//a[contains(@href, '/jobs/view/')]]").all()
+        
+        if not jobs:
+            print("\nSearch successful, but no job listings were found.")
+            return None
 
-        print("Search submitted. Waiting for results...")
-
-        job_list_element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "jobs-search__results-list")))
-        time.sleep(2)
-
-        jobs = job_list_element.find_elements(By.TAG_NAME, "li")
-
+        print(f"\n--- Found {len(jobs)} listings. Scraping data... ---")
+        
         scraped_jobs = []
-        print("\n--- Top Job Results ---")
-        for i, job in enumerate(jobs[:10]):
+        for i, job_card in enumerate(jobs):
+            title = None
+            company = "Company Not Listed" # Default value
+            job_link = None
+            
             try:
-                title = job.find_element(By.CSS_SELECTOR, "h3.base-search-card__title").text
-                company = job.find_element(By.CSS_SELECTOR, "h4.base-search-card__subtite").text
-                job_link = job.find_element(By.CSS_SELECTOR, "a.base-card__full-link").get_attribute("href")
-
-                scraped_jobs.append({'title': title, 'company': company, 'link': job_link})
-                print(f"{i+1}. {title} at {company}")
-            except NoSuchElementException:
+                title_link_element = job_card.locator("a[href*='/jobs/view/']").first
+                title = title_link_element.inner_text()
+                job_link = title_link_element.get_attribute("href")
+            except Exception:
+                print(f"  ⚠️ INFO: Item {i+1} is missing a title/link. Skipping.")
                 continue
 
+            try:
+                company_link_element = job_card.locator("a[href*='/company/']").first
+                company = company_link_element.inner_text()
+            except Exception:
+                pass
+            
+            if title and job_link:
+                if not job_link.startswith("http"):
+                    job_link = f"https://www.linkedin.com{job_link}"
+                scraped_jobs.append({'title': title.strip(), 'company': company.strip(), 'link': job_link})
+
         if not scraped_jobs:
-            print("\nNo jobs found matching your criteria. Please try a broader search.")
+            print("\nCould not parse any valid job data from the results page. The layout may have changed.")
             return None
+            
+        print("\n--- Top Job Results ---")
+        for i, job in enumerate(scraped_jobs):
+             print(f"{i+1}. {job['title']} at {job['company']}")
 
         while True:
             choice = input("\nSelect a job number to proceed (or '0' to cancel): ")
@@ -64,11 +83,11 @@ def search_and_select_job(driver):
                     return scraped_jobs[choice_num - 1]
                 elif choice_num == 0:
                     return None
-            print("Invalid selection. Please enter a number from the list.")
+            print("Invalid selection.")
 
-    except TimeoutException:
-            print("\nCould not find job listings. The page may have changed or your search returned no results.")
-            return None
+    except PlaywrightTimeoutError:
+        print("\n❌ A timeout occurred. The script waited for job results, but none appeared.")
+        return None
     except Exception as e:
-            print(f"\nAn unexpected error occured during job search: {e}")
-            return None
+        print(f"\nAn unexpected error occurred during job search: {e}")
+        return None

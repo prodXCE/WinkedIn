@@ -1,57 +1,47 @@
-import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from playwright.sync_api import Page, expect, TimeoutError as PlaywrightTimeoutError
 
-def search_and_select_person(driver, job_info):
+def search_and_select_person(page: Page, job_info: dict):
     """
-    Searches for a relevant person at the company from the job info.
+    Searches for a relevant person at the company using Playwright.
     """
     role = input(f"\nWhat type of person do you want to find at {job_info['company']}? (e.g., 'Recruiter', 'Hiring Manager'): ")
     search_query = f'"{role}" "{job_info["company"]}"'
-
-    print(f" Searching for people with query: {search_query}")
-    wait = WebDriverWait(driver, 15)
+    
+    print(f"🔍 Searching for people with query: {search_query}")
 
     try:
-        search_bar = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='People']")))
-        search_bar.clear()
-        search_bar.send_keys(search_query)
-        search_bar.send_keys(Keys.RETURN)
+        search_bar = page.get_by_placeholder("Search")
+        search_bar.fill(search_query)
+        search_bar.press("Enter")
 
-        people_filter_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[text()='People']")))
-        people_filter_button.click()
-
+        page.get_by_role("button", name="People").click()
         print("Applied 'People' filter. Waiting for results...")
+        
+        results_list = page.locator("ul.reusable-search__entity-result-list")
+        expect(results_list).to_be_visible(timeout=20000)
 
-        wait.until(EC.presence_of_element_located((By.ID, "main")))
-        time.sleep(2)
-
-        people_list_element = driver.find_element(By.CLASS_NAME, "reusable-search__entity-result-list")
-        people = people_list_element.find_elements(By.TAG_NAME, "li")
-
+        people = results_list.locator("li").all()
+        
         scraped_people = []
         print("\n--- People Found ---")
         for i, person_card in enumerate(people[:5]):
             try:
-                name_element = person_card.find_element(By.CSS_SELECTOR, "span[aria-hidden='true']")
-                name = name_element.text
+                name_element = person_card.locator("span[aria-hidden='true']").first
+                name = name_element.inner_text()
                 if not name or name == "LinkedIn Member": continue
-
-                profile_link_element = person_card.find_element(By.CSS_SELECTOR, "a.app-aware-link")
+                
+                profile_link_element = person_card.locator("a.app-aware-link").first
                 profile_link = profile_link_element.get_attribute("href")
-
+                
                 scraped_people.append({'name': name, 'profile_url': profile_link})
                 print(f"{i+1}. {name}")
-            except NoSuchElementException:
+            except Exception:
                 continue
-
+                
         if not scraped_people:
-            print("\nNo relevant people found. You might want to try a different role (e.g., 'Talent Acquisition').")
+            print("\nNo relevant people found.")
             return None
-
+        
         while True:
             choice = input("\nSelect a person to connect with (or '0' to cancel): ")
             if choice.isdigit():
@@ -60,11 +50,11 @@ def search_and_select_person(driver, job_info):
                     return scraped_people[choice_num - 1]['profile_url']
                 elif choice_num == 0:
                     return None
-            print("Invalid selection. Please enter a number from the list")
+            print("Invalid selection.")
 
-    except TimeoutException:
+    except PlaywrightTimeoutError:
         print("\nCould not find people results. The page may have changed or the search returned no results.")
         return None
     except Exception as e:
-        print(f"\nAn unexpected error occured during person search: {e}")
+        print(f"\nAn unexpected error occurred during person search: {e}")
         return None
